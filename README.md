@@ -6,6 +6,7 @@
 **Implemented voice recognition and transcription(query.py): Aarav Jain**
 
 **Coach: Jewel Tilak""
+
 ---
 
 ## 🧠 Overview
