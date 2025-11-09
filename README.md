@@ -2,9 +2,10 @@
 
 ### Developed by the Humanoid Team  
 **Lead Developer & Head Coder:** Mohit Sheth
-**Implemented voice recognition and transcription(query.py): Aarav Jain**
-**A big helper: ChatGPT**
 
+**Implemented voice recognition and transcription(query.py): Aarav Jain**
+
+**Coach: Jewel Tilak""
 ---
 
 ## 🧠 Overview
