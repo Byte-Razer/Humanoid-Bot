@@ -3,9 +3,9 @@
 ### Developed by the Humanoid Team
 **Coach: Jewel Tilak**
 
-**Lead Developer & Head Coder: Mohit Sheth** 
+**Head Coder: Mohit Sheth** 
 
-**Implemented voice recognition and transcription: Aarav Jain**
+**Implemented voice recognition: Aarav Jain**
 
 
 ---
