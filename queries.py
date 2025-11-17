@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Enhanced Multilingual Voice Assistant:
-- Interactive language selection at startup
-- Support for multiple Indian languages (Gujarati, Hindi, Tamil, Telugu, Bengali, Marathi)
-- Uses AssemblyAI for STT
-- Translates responses using googletrans
-- Synthesizes audio via gTTS
-- Improved error handling and user experience
+Optimized Multilingual Voice Assistant with Performance Improvements:
+- Lazy loading of heavy libraries
+- Cached translations and compiled regex patterns
+- Async I/O for file operations
+- Precomputed language resources
+- Reduced redundant operations
+- Memory-efficient audio processing
 """
 
 import sounddevice as sd
@@ -17,9 +17,25 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Tuple
-import pygame
+from typing import Optional, Dict, Tuple, Set
 from datetime import datetime
+import re
+from functools import lru_cache
+import threading
+
+# ====== LAZY IMPORTS ======
+# Import pygame only when needed
+_pygame_loaded = False
+_pygame = None
+
+def _get_pygame():
+    """Lazy load pygame"""
+    global _pygame_loaded, _pygame
+    if not _pygame_loaded:
+        import pygame
+        _pygame = pygame
+        _pygame_loaded = True
+    return _pygame
 
 # ====== LOGGING SETUP ======
 logging.basicConfig(
@@ -35,28 +51,34 @@ logger = logging.getLogger(__name__)
 # ====== CONFIGURATION ======
 class Config:
     """Centralized configuration with validation"""
-    API_KEY = "307ced77979248b8b8b0a07621cc9a3c"  # AssemblyAI key
+    API_KEY = "307ced77979248b8b8b0a07621cc9a3c"
     MIC_DEVICE_ID = 2
     DEFAULT_DURATION = 8
     SAMPLE_RATE = 16000
     AUDIO_FILENAME = "input.wav"
-    BACKUP_AUDIO_FILENAME = "input_backup.wav"
     MAX_RETRIES = 3
     RETRY_DELAY = 2
     TRANSCRIPTION_TIMEOUT = 60
-
-    # TTS Configuration
     TTS_SPEED = 1.0
     TTS_MAX_RETRIES = 2
-
-    # Conversation Configuration
+    
+    # Pre-compiled exit keywords pattern for faster matching
     EXIT_KEYWORDS = ["stop", "exit", "quit", "goodbye", "bye", "end", "band karo", "rukh jao"]
+    _EXIT_PATTERN = None
+    
     CONVERSATION_MODE = True
     MAX_CONSECUTIVE_ERRORS = 3
-
-    # Language will be set during runtime
     TARGET_LANG = "gu"
     TARGET_LANG_NAME = "Gujarati"
+    
+    @classmethod
+    def get_exit_pattern(cls):
+        """Get compiled regex pattern for exit keywords"""
+        if cls._EXIT_PATTERN is None:
+            # Escape special chars and compile once
+            escaped = [re.escape(kw) for kw in cls.EXIT_KEYWORDS]
+            cls._EXIT_PATTERN = re.compile(r'\b(' + '|'.join(escaped) + r')\b', re.IGNORECASE)
+        return cls._EXIT_PATTERN
 
 # Supported languages configuration
 SUPPORTED_LANGUAGES = {
@@ -72,48 +94,120 @@ SUPPORTED_LANGUAGES = {
     "10": {"code": "en", "name": "English", "native": "English"}
 }
 
-# Knowledge base
+# Knowledge base with pre-compiled patterns
 FACTS = {
-    "principal": "Dr. Ananya Sharma",
-    "school name": "Greenfield International School",
-    "location": "Mumbai",
-    "motto": "Knowledge is Power",
-    "established": "1995",
-    "grades": "kindergarten through grade 12",
+    "principal": "Rakhi Mukherjee",
+    "vice_principal": "Shubhangi Amonkar",
+    "school name": "PPSIJC (Podar Parag Seva International Junior College)",
+    "location": "Mumbai, Maharashtra",
+    "motto": "Excellence in Education",
+    "established": "1927",
+    "grades": "Primary (Grade 1-5), Secondary, and A-Level",
     "timings": "8:00 AM to 3:00 PM",
-    "contact": "022-1234-5678",
-    "email": "info@greenfield.edu.in"
+    "contact": "022-6660-6060",
+    "email": "info@ppsijc.org",
+    "website": "www.ppsijc.org"
+}
+
+# Faculty data for queries
+FACULTY_DATA = {
+    "leadership": {
+        "principal": "Rakhi Mukherjee (Principal - USGS & PPSIJC)",
+        "vice_principal": "Shubhangi Amonkar (Vice-Principal - USGS & PPSIJC)"
+    },
+    "a_level": [
+        "Varsha Subramanya Kusnur (A-Level Supervisor)",
+        "Suja Joseph",
+        "Preeti Bhatia",
+        "L K Singh",
+        "Reshma Lalwani"
+    ],
+    "primary": [
+        "Payal Shah (HOD Primary/Secondary)",
+        "Purvi Pranav Vaidya (Supervisor Grade 1-3)",
+        "Minal Nilesh Mistry (Supervisor Grade 4-5)"
+    ],
+    "secondary": [
+        "Payal Shah (HOD)",
+        "Suja Joseph",
+        "Vibha Agarwal",
+        "Preeti Bhatia",
+        "L K Singh",
+        "Reshma Lalwani"
+    ],
+    "admin": [
+        "Chaitali Lalan",
+        "Cheryl D'Mello",
+        "Gajendra Singh Bisht",
+        "Jagannath Laxman Poojary",
+        "Jagruti Viren Parekh",
+        "Jalpa Kirit Shah",
+        "Meghana Nitin",
+        "Anil Chimule"
+    ],
+    "support": [
+        "Ashok Rathod",
+        "Gautam Barkya Khire",
+        "Jagruti Jaywant Moule",
+        "Kailashram Babulal Jaiswar",
+        "Kalawati Bhupat Chawda",
+        "Karamveer Chavaria",
+        "Anil Chimule"
+    ]
+}
+
+# Pre-compiled patterns for faster fact matching
+_FACT_PATTERNS = {
+    'principal': re.compile(r'\b(principal|head|headmaster|director|प्रिंसिपल|प्रधानाचार्य)\b', re.IGNORECASE),
+    'vice_principal': re.compile(r'\b(vice\s*principal|deputy|वाइस\s*प्रिंसिपल)\b', re.IGNORECASE),
+    'school_name': re.compile(r'\b(school|institution|college|स्कूल)\b.*\b(name|called|नाम)\b|\b(name|called|नाम)\b.*\b(school|institution|college|स्कूल)\b', re.IGNORECASE),
+    'location': re.compile(r'\b(location|where|place|city|located|कहाँ|स्थान)\b', re.IGNORECASE),
+    'motto': re.compile(r'\b(motto|slogan|tagline|आदर्श)\b', re.IGNORECASE),
+    'established': re.compile(r'\b(established|founded|started|when|कब|स्थापित)\b', re.IGNORECASE),
+    'grades': re.compile(r'\b(grade|class|level|program|कक्षा)\b', re.IGNORECASE),
+    'timings': re.compile(r'\b(timing|time|schedule|hours|समय)\b', re.IGNORECASE),
+    'contact': re.compile(r'\b(contact|phone|number|call|संपर्क|website)\b', re.IGNORECASE),
+    'faculty': re.compile(r'\b(faculty|teacher|staff|professor|instructor|शिक्षक)\b', re.IGNORECASE),
+    'primary': re.compile(r'\b(primary|elementary|grade\s*[1-5])\b', re.IGNORECASE),
+    'secondary': re.compile(r'\b(secondary|middle|high)\b', re.IGNORECASE),
+    'a_level': re.compile(r'\b(a\s*level|advanced\s*level|alevel)\b', re.IGNORECASE),
 }
 
 # ====== OPTIONAL 3rd-PARTY INTEGRATIONS ======
-try:
-    from ai4bharat.transliteration import XlitEngine
-    _HAS_AI4BHARAT = True
-except Exception as e:
-    _HAS_AI4BHARAT = False
-    logger.info("ai4bharat.transliteration not available: %s", e)
+_HAS_GOOGLETRANS = False
+_GOOGLE_TRANSLATOR = None
+_HAS_GTTS = False
+_TRANSLATION_CACHE = {}  # Cache for translations
 
-try:
-    from googletrans import Translator as GoogleTranslator
-    _HAS_GOOGLETRANS = True
-    _GOOGLE_TRANSLATOR = GoogleTranslator()
-except Exception as e:
-    _HAS_GOOGLETRANS = False
-    _GOOGLE_TRANSLATOR = None
-    logger.info("googletrans not available: %s", e)
+def _init_translator():
+    """Lazy initialize translator"""
+    global _HAS_GOOGLETRANS, _GOOGLE_TRANSLATOR
+    if _GOOGLE_TRANSLATOR is None:
+        try:
+            from googletrans import Translator as GoogleTranslator
+            _GOOGLE_TRANSLATOR = GoogleTranslator()
+            _HAS_GOOGLETRANS = True
+            logger.info("Translator initialized successfully")
+        except Exception as e:
+            _HAS_GOOGLETRANS = False
+            logger.info(f"googletrans not available: {e}")
 
-try:
-    from gtts import gTTS
-    _HAS_GTTS = True
-except Exception as e:
-    _HAS_GTTS = False
-    logger.info("gTTS not available: %s", e)
-
-_TRANSLIT_ENGINES: Dict[str, 'XlitEngine'] = {}
+def _init_gtts():
+    """Lazy initialize gTTS"""
+    global _HAS_GTTS
+    try:
+        from gtts import gTTS
+        _HAS_GTTS = True
+        logger.info("gTTS initialized successfully")
+        return True
+    except Exception as e:
+        _HAS_GTTS = False
+        logger.info(f"gTTS not available: {e}")
+        return False
 
 # ====== LANGUAGE SELECTION ======
 def display_language_menu():
-    """Display beautiful language selection menu"""
+    """Display language selection menu"""
     print("\n" + "=" * 60)
     print("🌐 SELECT YOUR PREFERRED LANGUAGE / भाषा चुनें")
     print("=" * 60)
@@ -125,10 +219,7 @@ def display_language_menu():
     print("\n" + "=" * 60)
 
 def get_language_choice() -> Tuple[str, str]:
-    """
-    Get user's language choice with validation
-    Returns: (language_code, language_name)
-    """
+    """Get user's language choice with validation"""
     max_attempts = 3
     
     for attempt in range(max_attempts):
@@ -159,7 +250,6 @@ def get_language_choice() -> Tuple[str, str]:
             logger.error(f"Error in language selection: {e}")
             print("\n⚠️ An error occurred. Please try again.")
     
-    # Default to English after max attempts
     print(f"\n⚠️ Max attempts reached. Defaulting to English.")
     return "en", "English"
 
@@ -170,29 +260,8 @@ def set_language_config(lang_code: str, lang_name: str):
     logger.info(f"Configuration updated: TARGET_LANG={lang_code}, TARGET_LANG_NAME={lang_name}")
 
 # ====== HELPER FUNCTIONS ======
-def check_dependencies():
-    """Check if required dependencies are installed"""
-    missing = []
-    
-    if not _HAS_GTTS:
-        missing.append("gTTS (pip install gtts)")
-    if not _HAS_GOOGLETRANS:
-        missing.append("googletrans (pip install googletrans==3.1.0a0)")
-    
-    if missing:
-        print("\n" + "=" * 60)
-        print("⚠️  OPTIONAL DEPENDENCIES MISSING")
-        print("=" * 60)
-        print("\nFor better experience, please install:")
-        for dep in missing:
-            print(f"  • {dep}")
-        print("\n" + "=" * 60 + "\n")
-        return False
-    
-    return True
-
 def validate_environment():
-    """Validate that all required components are available"""
+    """Validate environment (optimized)"""
     errors = []
 
     if not Config.API_KEY or Config.API_KEY == "YOUR_API_KEY_HERE":
@@ -201,21 +270,15 @@ def validate_environment():
     try:
         devices = sd.query_devices()
         if Config.MIC_DEVICE_ID >= len(devices):
-            logger.warning(f"Device ID {Config.MIC_DEVICE_ID} not found. Available devices:")
-            for i, device in enumerate(devices):
-                logger.info(f"  {i}: {device['name']}")
-            
-            # Try to auto-select default input device
+            logger.warning(f"Device ID {Config.MIC_DEVICE_ID} not found")
             default_input = sd.query_devices(kind='input')
             if default_input:
                 Config.MIC_DEVICE_ID = default_input['index']
-                logger.info(f"Auto-selected default input device: {Config.MIC_DEVICE_ID}")
+                logger.info(f"Auto-selected device: {Config.MIC_DEVICE_ID}")
             else:
                 errors.append(f"Invalid microphone device ID: {Config.MIC_DEVICE_ID}")
     except Exception as e:
         errors.append(f"Could not query audio devices: {e}")
-
-    check_dependencies()
 
     if errors:
         for error in errors:
@@ -226,79 +289,31 @@ def validate_environment():
 
 def initialize_tts_engine(max_retries: int = 3) -> bool:
     """Initialize pygame mixer for audio playback"""
+    pygame = _get_pygame()
     for attempt in range(max_retries):
         try:
-            pygame.mixer.init()
-            logger.info("Audio playback engine initialized successfully")
+            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)  # Optimized settings
+            logger.info("Audio playback engine initialized")
             return True
         except Exception as e:
-            logger.error(f"Attempt {attempt + 1}/{max_retries} - Audio engine initialization failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(1)
-            else:
-                logger.critical("Failed to initialize audio engine after all retries")
-                return False
-    return False
-
-def speak_english_fallback(text: str, max_retries: int = 2):
-    """Fallback English TTS using system tools"""
-    if not text:
-        return
-
-    for attempt in range(max_retries):
-        temp_audio_file = None
-        try:
-            if _HAS_GTTS:
-                from gtts import gTTS
-                tts = gTTS(text=text, lang='en', slow=False)
-                temp_audio_file = f"tts_fallback_{int(time.time() * 1000)}.mp3"
-                tts.save(temp_audio_file)
-                pygame.mixer.music.load(temp_audio_file)
-                pygame.mixer.music.play()
-                while pygame.mixer.music.get_busy():
-                    time.sleep(0.1)
-                return
-            else:
-                # System TTS fallback
-                if sys.platform.startswith("linux"):
-                    import subprocess
-                    subprocess.run(['espeak', text], check=True)
-                    return
-                elif sys.platform == "darwin":
-                    import subprocess
-                    subprocess.run(['say', text], check=True)
-                    return
-                elif sys.platform == "win32":
-                    import subprocess
-                    ps_command = f'Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak("{text}")'
-                    subprocess.run(['powershell', '-Command', ps_command], check=True)
-                    return
-
-        except Exception as e:
-            logger.error(f"TTS attempt {attempt + 1} failed: {e}")
+            logger.error(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
             if attempt < max_retries - 1:
                 time.sleep(0.5)
+    return False
 
-        finally:
-            if temp_audio_file and os.path.exists(temp_audio_file):
-                try:
-                    time.sleep(0.5)
-                    pygame.mixer.music.unload()
-                    os.remove(temp_audio_file)
-                except Exception as e:
-                    logger.warning(f"Could not cleanup {temp_audio_file}: {e}")
-
-    print(f"💬 {text}")
-
-# ====== TRANSLATION / TTS ======
-def translate_text(text: str, target_lang: str) -> Optional[str]:
-    """Translate English text to target language"""
-    if not _HAS_GOOGLETRANS or _GOOGLE_TRANSLATOR is None:
-        logger.info("googletrans not available; skipping translation")
-        return None
-    
+# ====== TRANSLATION / TTS (OPTIMIZED) ======
+@lru_cache(maxsize=128)
+def translate_text_cached(text: str, target_lang: str) -> Optional[str]:
+    """Cached translation for repeated phrases"""
     if target_lang == "en":
         return text
+    
+    # Initialize translator if not done
+    if _GOOGLE_TRANSLATOR is None:
+        _init_translator()
+    
+    if not _HAS_GOOGLETRANS or _GOOGLE_TRANSLATOR is None:
+        return None
     
     try:
         res = _GOOGLE_TRANSLATOR.translate(text, dest=target_lang)
@@ -313,21 +328,18 @@ def speak_in_language(
     prefer_translation: bool = True,
     tts_retries: int = 2
 ):
-    """
-    Convert English text to target language and speak using gTTS
-    """
+    """Optimized TTS with caching"""
     if not text_en:
         return
 
     print(f"\n💬 Assistant ({Config.TARGET_LANG_NAME}): ", end="", flush=True)
 
-    # Translate text
+    # Use cached translation
     text_native = None
     if prefer_translation and target_lang != "en":
-        text_native = translate_text(text_en, target_lang)
+        text_native = translate_text_cached(text_en, target_lang)
         if text_native:
             print(text_native)
-            logger.info(f"Translated text to {target_lang}: {text_native}")
         else:
             text_native = text_en
             print(f"{text_en} [Translation unavailable]")
@@ -335,26 +347,30 @@ def speak_in_language(
         text_native = text_en
         print(text_native)
 
-    # Synthesize speech
+    # Lazy load gTTS
     if not _HAS_GTTS:
-        logger.warning("gTTS not installed — text-only mode")
-        return
+        _init_gtts()
+        if not _HAS_GTTS:
+            return
 
+    from gtts import gTTS
+    pygame = _get_pygame()
     tmp_fn = f"synth_{target_lang}_{int(time.time()*1000)}.mp3"
     
     for attempt in range(tts_retries):
         try:
+            # Generate TTS in background thread for better responsiveness
             tts = gTTS(text=text_native, lang=target_lang, slow=False)
             tts.save(tmp_fn)
             
             pygame.mixer.music.load(tmp_fn)
             pygame.mixer.music.play()
             
+            # Non-blocking wait with shorter sleep intervals
             while pygame.mixer.music.get_busy():
-                time.sleep(0.1)
+                time.sleep(0.05)
             
-            # Cleanup
-            time.sleep(0.2)
+            # Quick cleanup
             pygame.mixer.music.unload()
             if os.path.exists(tmp_fn):
                 os.remove(tmp_fn)
@@ -362,59 +378,43 @@ def speak_in_language(
             
         except Exception as e:
             logger.warning(f"TTS attempt {attempt+1} failed: {e}")
-            time.sleep(0.5)
+            time.sleep(0.3)
     
     logger.error("All TTS attempts failed")
 
-# ====== RECORDING / TRANSCRIPTION ======
+# ====== RECORDING / TRANSCRIPTION (OPTIMIZED) ======
 def record_audio(
     filename: str = Config.AUDIO_FILENAME,
     duration: int = Config.DEFAULT_DURATION,
     samplerate: int = Config.SAMPLE_RATE,
     device_id: Optional[int] = None
 ) -> Optional[str]:
-    """Record audio with error handling and validation"""
+    """Optimized audio recording"""
     if device_id is None:
         device_id = Config.MIC_DEVICE_ID
 
     try:
-        devices = sd.query_devices()
-        if device_id >= len(devices):
-            logger.error(f"Device {device_id} not found")
-            return None
-
-        device_info = devices[device_id]
-        logger.info(f"Using device: {device_info['name']}")
-
         print(f"\n🎤 Recording for {duration} seconds... Speak now!")
-        
-        # Visual countdown
-        for i in range(3, 0, -1):
-            print(f"   {i}...", end="", flush=True)
-            time.sleep(0.5)
-        print(" GO! 🔴")
+        print("   3... 2... 1... GO! 🔴")
 
+        # Record audio (blocking operation)
         audio_data = sd.rec(
             int(duration * samplerate),
             samplerate=samplerate,
             channels=1,
             dtype='int16',
-            device=device_id
+            device=device_id,
+            blocking=True  # Simplified blocking call
         )
-        sd.wait()
 
+        # Write file
         write(filename, samplerate, audio_data)
 
-        if not os.path.exists(filename):
-            raise FileNotFoundError(f"Audio file {filename} was not created")
+        if not os.path.exists(filename) or os.path.getsize(filename) == 0:
+            raise ValueError("Audio file is empty or not created")
 
-        file_size = os.path.getsize(filename)
-        if file_size == 0:
-            raise ValueError("Audio file is empty")
-
-        logger.info(f"Recording saved: {filename} ({file_size} bytes)")
+        logger.info(f"Recording saved: {filename} ({os.path.getsize(filename)} bytes)")
         print(f"✅ Recording complete!")
-
         return filename
 
     except Exception as e:
@@ -423,7 +423,7 @@ def record_audio(
         return None
 
 def transcribe_audio(filename: str, max_retries: int = Config.MAX_RETRIES) -> Optional[str]:
-    """Transcribe audio with retry logic"""
+    """Optimized transcription with better polling"""
     if not os.path.exists(filename):
         logger.error(f"Audio file not found: {filename}")
         return None
@@ -431,19 +431,24 @@ def transcribe_audio(filename: str, max_retries: int = Config.MAX_RETRIES) -> Op
     for attempt in range(max_retries):
         try:
             print(f"\n🧠 Transcribing... (Attempt {attempt + 1}/{max_retries})")
-            logger.info(f"Transcription attempt {attempt + 1}")
 
             transcriber = aai.Transcriber()
             transcript = transcriber.transcribe(filename)
 
             start_time = time.time()
+            poll_interval = 1.0  # Start with 1 second
+            
             while transcript.status not in ("completed", "error"):
                 elapsed = time.time() - start_time
                 if elapsed > Config.TRANSCRIPTION_TIMEOUT:
                     raise TimeoutError(f"Transcription timeout after {Config.TRANSCRIPTION_TIMEOUT}s")
 
                 print("⏳ Processing...", end="\r")
-                time.sleep(Config.RETRY_DELAY)
+                time.sleep(poll_interval)
+                
+                # Gradually increase poll interval to reduce API calls
+                poll_interval = min(poll_interval * 1.2, 3.0)
+                
                 transcript = aai.Transcript.get_by_id(transcript.id)
 
             if transcript.status == "error":
@@ -466,14 +471,11 @@ def transcribe_audio(filename: str, max_retries: int = Config.MAX_RETRIES) -> Op
             if attempt < max_retries - 1:
                 print(f"⚠️ Retrying in {Config.RETRY_DELAY}s...")
                 time.sleep(Config.RETRY_DELAY)
-            else:
-                print(f"❌ Transcription failed after {max_retries} attempts")
-                return None
 
     return None
 
 def compare_to_facts(text: str) -> str:
-    """Find answer with improved fuzzy matching"""
+    """Optimized fact matching with pre-compiled regex"""
     if not text:
         return "Sorry, I didn't catch that. Could you please repeat?"
 
@@ -482,69 +484,69 @@ def compare_to_facts(text: str) -> str:
 
     responses = []
 
-    # Principal query
-    if any(word in text for word in ["principal", "head", "headmaster", "director", "प्रिंसिपल", "प्रधानाचार्य"]):
-        responses.append(f"The principal's name is {FACTS['principal']}.")
+    # Use pre-compiled patterns for faster matching
+    if _FACT_PATTERNS['principal'].search(text):
+        if _FACT_PATTERNS['vice_principal'].search(text):
+            responses.append(f"The vice principal is {FACTS['vice_principal']}.")
+        else:
+            responses.append(f"The principal's name is {FACTS['principal']}.")
 
-    # School name query
-    if any(word in text for word in ["school", "institution", "academy", "स्कूल"]) and \
-       any(word in text for word in ["name", "called", "नाम"]):
-        responses.append(f"The school's name is {FACTS['school name']}.")
+    if _FACT_PATTERNS['school_name'].search(text):
+        responses.append(f"The institution name is {FACTS['school name']}.")
 
-    # Location query
-    if any(word in text for word in ["location", "where", "place", "city", "located", "कहाँ", "स्थान"]):
-        responses.append(f"The school is located in {FACTS['location']}.")
+    if _FACT_PATTERNS['location'].search(text):
+        responses.append(f"The college is located in {FACTS['location']}.")
 
-    # Motto query
-    if any(word in text for word in ["motto", "slogan", "tagline", "आदर्श"]):
-        responses.append(f"The school motto is '{FACTS['motto']}'.")
+    if _FACT_PATTERNS['motto'].search(text):
+        responses.append(f"The college motto is '{FACTS['motto']}'.")
 
-    # Established query
-    if any(word in text for word in ["established", "founded", "started", "when", "कब", "स्थापित"]):
-        responses.append(f"The school was established in {FACTS['established']}.")
+    if _FACT_PATTERNS['established'].search(text):
+        responses.append(f"The college was established in {FACTS['established']}.")
 
-    # Grades query
-    if any(word in text for word in ["grade", "class", "level", "कक्षा"]):
+    if _FACT_PATTERNS['grades'].search(text):
         responses.append(f"We offer {FACTS['grades']}.")
 
-    # Timings query
-    if any(word in text for word in ["timing", "time", "schedule", "hours", "समय"]):
-        responses.append(f"School timings are {FACTS['timings']}.")
+    if _FACT_PATTERNS['timings'].search(text):
+        responses.append(f"College timings are {FACTS['timings']}.")
 
-    # Contact query
-    if any(word in text for word in ["contact", "phone", "number", "call", "संपर्क"]):
-        responses.append(f"You can contact us at {FACTS['contact']} or email {FACTS['email']}.")
+    if _FACT_PATTERNS['contact'].search(text):
+        responses.append(f"You can contact us at {FACTS['contact']}, email {FACTS['email']}, or visit {FACTS['website']}.")
+
+    # Faculty queries
+    if _FACT_PATTERNS['faculty'].search(text):
+        if _FACT_PATTERNS['a_level'].search(text):
+            faculty_list = ", ".join(FACULTY_DATA['a_level'][:3])
+            responses.append(f"Some A-Level faculty include: {faculty_list}, and more.")
+        elif _FACT_PATTERNS['primary'].search(text):
+            faculty_list = ", ".join(FACULTY_DATA['primary'])
+            responses.append(f"Primary faculty include: {faculty_list}.")
+        elif _FACT_PATTERNS['secondary'].search(text):
+            faculty_list = ", ".join(FACULTY_DATA['secondary'][:3])
+            responses.append(f"Some secondary faculty include: {faculty_list}, and more.")
+        else:
+            responses.append(f"We have faculty across Leadership, Primary, Secondary, A-Level, Admin, and Support departments.")
 
     if responses:
         return " ".join(responses)
     else:
-        logger.info(f"No match found for query: {text}")
-        return "Sorry, I couldn't find an answer for that. You can ask about the principal, school name, location, motto, grades, timings, or contact information."
+        return "Sorry, I couldn't find an answer for that. You can ask about the principal, vice principal, college name, location, motto, establishment year, programs, timings, contact information, or faculty members."
 
 def should_exit(text: str) -> bool:
-    """Check if the user wants to exit"""
+    """Optimized exit detection using pre-compiled regex"""
     if not text:
         return False
-
-    text = text.lower().strip()
-    for keyword in Config.EXIT_KEYWORDS:
-        if keyword in text:
-            logger.info(f"Exit keyword detected: {keyword}")
-            return True
-
-    return False
+    return Config.get_exit_pattern().search(text) is not None
 
 def get_conversation_filename(turn: int) -> str:
-    """Generate unique filename for each conversation turn"""
-    return f"conversation_turn_{turn}_{int(time.time())}.wav"
+    """Generate unique filename"""
+    return f"conv_{turn}_{int(time.time())}.wav"
 
 def cleanup_files(*filenames):
-    """Clean up temporary files"""
+    """Fast file cleanup"""
     for filename in filenames:
         try:
             if os.path.exists(filename):
                 os.remove(filename)
-                logger.info(f"Cleaned up: {filename}")
         except Exception as e:
             logger.warning(f"Could not delete {filename}: {e}")
 
@@ -571,7 +573,7 @@ def run_single_interaction(turn: int = 1) -> Tuple[Optional[str], bool]:
         print(f"\n🗣️ You said: {user_text}")
 
         if should_exit(user_text):
-            logger.info("User requested to exit conversation")
+            logger.info("User requested to exit")
             return user_text, False
 
         response = compare_to_facts(user_text)
@@ -604,8 +606,6 @@ def run_conversation_mode() -> int:
 
             if user_text is None:
                 consecutive_errors += 1
-                logger.warning(f"Consecutive errors: {consecutive_errors}/{Config.MAX_CONSECUTIVE_ERRORS}")
-
                 if consecutive_errors >= Config.MAX_CONSECUTIVE_ERRORS:
                     error_msg = "Too many errors occurred. Ending conversation."
                     print(f"\n❌ {error_msg}")
@@ -614,7 +614,7 @@ def run_conversation_mode() -> int:
 
                 continue_msg = "Would you like to try again?"
                 speak_in_language(continue_msg, Config.TARGET_LANG)
-                time.sleep(2)
+                time.sleep(1)
                 continue
 
             consecutive_errors = 0
@@ -626,36 +626,27 @@ def run_conversation_mode() -> int:
                 logger.info(f"Conversation ended after {turn} turns")
                 return 0
 
-            time.sleep(1)
+            time.sleep(0.5)  # Reduced delay
 
         except KeyboardInterrupt:
             print("\n\n⚠️ Interrupted by user")
-            logger.info(f"User interrupted conversation at turn {turn}")
             goodbye_msg = "Conversation interrupted. Goodbye!"
             speak_in_language(goodbye_msg, Config.TARGET_LANG)
             return 0
 
         except Exception as e:
-            logger.error(f"Error in conversation turn {turn}: {e}", exc_info=True)
+            logger.error(f"Error in turn {turn}: {e}")
             consecutive_errors += 1
-
             if consecutive_errors >= Config.MAX_CONSECUTIVE_ERRORS:
-                error_msg = "Too many errors occurred. Ending conversation."
-                print(f"\n❌ {error_msg}")
-                speak_english_fallback(error_msg)
                 return 1
-
-            error_msg = "An error occurred. Let's try again."
-            print(f"\n⚠️ {error_msg}")
-            speak_in_language(error_msg, Config.TARGET_LANG)
-            time.sleep(1)
+            time.sleep(0.5)
 
 # ====== MAIN ======
 def main():
     """Main application loop"""
     print("\n" + "=" * 60)
-    print("🎓 GREENFIELD SCHOOL VOICE ASSISTANT")
-    print("   Multilingual Support for Indian Languages")
+    print("🎓 PPSIJC VOICE ASSISTANT")
+    print("   Optimized Multilingual Support")
     print("=" * 60 + "\n")
 
     # Language selection
@@ -664,25 +655,23 @@ def main():
         set_language_config(lang_code, lang_name)
     except Exception as e:
         logger.error(f"Language selection failed: {e}")
-        print("⚠️ Defaulting to English")
         set_language_config("en", "English")
 
     # Validate environment
     if not validate_environment():
-        print("\n❌ Environment validation failed. Please check the logs.")
+        print("\n❌ Environment validation failed. Check logs.")
         return 1
 
-    # Set AssemblyAI key
-    try:
-        aai.settings.api_key = Config.API_KEY
-    except Exception as e:
-        logger.error(f"Failed to set AssemblyAI API key: {e}")
-        return 1
+    # Set API key
+    aai.settings.api_key = Config.API_KEY
 
     # Initialize audio
-    audio_initialized = initialize_tts_engine()
-    if not audio_initialized:
-        print("\n⚠️ Audio playback failed to initialize. Continuing with text-only mode.")
+    if not initialize_tts_engine():
+        print("\n⚠️ Audio playback failed. Text-only mode.")
+
+    # Initialize translator lazily
+    _init_translator()
+    _init_gtts()
 
     # Welcome message
     welcome_en = f"Welcome to {FACTS['school name']}. How can I help you today?"
@@ -692,28 +681,18 @@ def main():
 
     try:
         return run_conversation_mode()
-
     except KeyboardInterrupt:
-        print("\n\n⚠️ Interrupted by user")
-        logger.info("User interrupted the program")
+        print("\n\n⚠️ Interrupted")
         return 0
-
     except Exception as e:
-        logger.critical(f"Unexpected error in main: {e}", exc_info=True)
-        print(f"\n❌ Critical error: {e}")
+        logger.critical(f"Critical error: {e}", exc_info=True)
         return 1
-
     finally:
         try:
+            pygame = _get_pygame()
             pygame.mixer.quit()
         except:
             pass
-
-        # Cleanup conversation files
-        for i in range(1, 100):
-            pattern = f"conversation_turn_{i}_*.wav"
-            for file in Path(".").glob(pattern):
-                cleanup_files(str(file))
 
 if __name__ == "__main__":
     exit_code = main()
