@@ -341,8 +341,8 @@ class AuraMain(QtWidgets.QMainWindow):
     def center_controls(self):
         container = QtWidgets.QWidget()
         layout = QtWidgets.QHBoxLayout(container)
-        layout.setSpacing(100)
-        layout.setContentsMargins(220,0, 60, 40)
+        layout.setSpacing(300)
+        layout.setContentsMargins(550,-250, 60, 40)
 
         self.aura_core = AuraCore()
         layout.addWidget(self.aura_core, alignment=QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
@@ -549,4 +549,5 @@ def main():
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
+
     main()
