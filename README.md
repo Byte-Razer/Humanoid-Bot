@@ -5,7 +5,7 @@
 
 **Head Coder: Mohit Sheth** 
 
-**Implemented voice recognition: Aarav Jain**
+**Other Team Members: Aarav Jain, Arnav Sharma**
 
 
 ---
