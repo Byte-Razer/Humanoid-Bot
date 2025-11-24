@@ -1,3 +1,5 @@
+#Written by Mohit
+#Adjusted to Raspberry Pi
 try:
     from PyQt5 import QtCore, QtGui, QtWidgets
 except ImportError:
@@ -598,4 +600,5 @@ def main():
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
+
     main()
