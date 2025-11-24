@@ -1,11 +1,12 @@
-# 🤖 The Humanoid Project — AURA Interface
+# 🤖 The Humanoid Project — AURA
+Hey welcome to AURA- Automated Unified Robotic Assistant.
 
 ### Developed by the Humanoid Team
 **Coach: Jewel Tilak**
 
 **Head Coder: Mohit Sheth** 
 
-**Other Team Members: Aarav Jain, Arnav Sharma**
+**Other Team Members**: Aarav Jain, Arnav Sharma
 
 
 ---
@@ -13,18 +14,16 @@
 ## 🧠 Overview
 
 The **Humanoid Project** is a school-based research and development initiative focused on building an intelligent, interactive humanoid system.  
-This interface — codenamed **AURA** — serves as the **main control center** for managing recognition systems, training data, and user interactions through a visually dynamic and responsive UI.
 
-Built with **PyQt5/PySide6**, AURA integrates animation, asynchronous processing, and modern design to create a professional, futuristic experience suitable for demonstration and expansion.
+My story:
+Hey this is Mohit here. I made the GUI code myself. Have you ever watched Iron Man. On seeing Jarvis it gave me the idea for making a pulsing orb similar to him.
+When I first thought of it, it seemed impossible. I was asked to make a simple GUI with the title and buttons. Why not just finish the work and be done?
+But I wanted to give life to AURA and I worked a lot on that orb. Now I can't imagine AURA without it.
 
 ---
 
 ## 🌟 Key Features
-
-- 🎇 **Dynamic Space Background** — Animated starfield rendered with `QPainter` and gradient lighting  
-- 💜 **Reactive AURA Core** — Pulsating energy orb that visually responds to system actions  
-- 🟣 **Custom Glow Buttons** — Smooth scaling, neon gradient effects, and subtle hover animations  
-- ⚙️ **Multithreading Support** — Background tasks run seamlessly using `QRunnable` and `QThreadPool`  
-- 🧩 **Integrated Control Hub** — Start recognition, train data, manage datasets, and trigger listening scripts directly from the UI  
-- 💾 **Cross-Compatibility** — Works with both **PyQt5** and **PySide6**  
-
+-Registration by taking face samples
+-Recognising users
+-Chatting with user
+-A futuristic GUI: with a orb which pulses like a heartbeat
