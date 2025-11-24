@@ -1,8 +1,0 @@
-#Hex Codes:
-#Orb: replace self._color = QtGui.QColor(38, 103, 255) 
-#with self._color = QtGui.QColor(100, 220, 255)
-#replace self.aura_core.pulse_react(QtGui.QColor(100, 220, 255))
-#with self.aura_core.pulse_react(QtGui.QColor(38, 103, 255))
-
-#replace font-size: 24px;
-#with font-size: 28px;
