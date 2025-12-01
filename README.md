@@ -6,7 +6,7 @@ Hey welcome to AURA- Automated Unified Robotic Assistant.
 
 **Head Coder: Mohit Sheth** 
 
-**Other Team Members**: Aarav Jain, Arnav Sharma
+**Other Team Members**: Aarav Jain, Arnav Sharma, Prisha Kapadia
 
 
 ---
