@@ -30,7 +30,7 @@ But I wanted to give life to AURA and I worked a lot on that orb. Now I can't im
 
 AURA in ACTION 🔥
 
-<img width="747" height="1024" alt="image" src="https://github.com/user-attachments/assets/8d93d4d7-6b22-4775-90e9-6b70f8522d55" />
+<img width="374" height="512" alt="image" src="https://github.com/user-attachments/assets/8d93d4d7-6b22-4775-90e9-6b70f8522d55" />
 
-<img width="1116" height="719" alt="image" src="https://github.com/user-attachments/assets/260d1c4c-4e79-44ac-a73e-59891935dbc7" />
+<img width="558" height="360" alt="image" src="https://github.com/user-attachments/assets/260d1c4c-4e79-44ac-a73e-59891935dbc7" />
 
