@@ -16,9 +16,8 @@ Hey welcome to AURA- Automated Unified Robotic Assistant.
 The **Humanoid Project** is a school-based research and development initiative focused on building an intelligent, interactive humanoid system.  
 
 My story:
-Hey this is Mohit here. I made the GUI code myself. I was inspired by Jarvis when making the GUI and this gave me the idea of using a pulsing orb.
-When I first thought of it, it seemed impossible. I was asked to make a simple GUI with the title and buttons. Why not just finish the work and be done?
-But I wanted to give life to AURA and I worked a lot on that orb. Now I can't imagine AURA without it.
+Hey this is Mohit here, creator of the GUI of AURA. I was inspired by Jarvis when making the GUI and this gave me the idea of using a pulsing orb.
+A task seemingly impossible, but I knew AURA wouldn't be as complete as it is without that pulsing heartbeat. Now I can't imagine AURA without it.
 
 ---
 
